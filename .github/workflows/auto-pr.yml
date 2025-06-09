@@ -24,20 +24,21 @@ jobs:
 
       - name: Build summary input from changed files
         id: build_summary_input
+        shell: bash
         run: |
           summary_input=""
           for file in ${{ steps.changes.outputs.files }}; do
             if [ -f "$file" ]; then
-              summary_input+="### $file\n"
-              summary_input+="$(cat "$file")\n\n"
+              summary_input+="### $file"$'\n'
+              summary_input+=$(cat "$file")
+              summary_input+=$'\n\n'
             fi
           done
-          # Store it in an output file
           echo "$summary_input" > summary_input.txt
-        shell: bash
 
       - name: Call AI summarizer API
         id: ai_summary
+        shell: bash
         run: |
           summary_input=$(<summary_input.txt)
           json_data=$(jq -n --arg diff "$summary_input" '{diff: $diff}')
