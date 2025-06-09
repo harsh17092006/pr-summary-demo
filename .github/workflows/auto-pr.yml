@@ -1,4 +1,4 @@
-```yaml
+
 name: Auto Create Draft PR with AI Summary
 
 on:
@@ -36,7 +36,6 @@ jobs:
         run: |
           summary_input=""
           for file in ${{ steps.changes.outputs.files }}; do
-            # Skip .env and non-text files, check if file exists
             if [[ "$file" != *.env ]] && [ -f "$file" ] && file "$file" | grep -q text; then
               summary_input+="### $file\n"
               summary_input+=$(git diff origin/main...HEAD -- "$file" | head -n 100)
@@ -55,12 +54,9 @@ jobs:
           API_URL: ${{ secrets.AI_SUMMARIZER_URL }}
         shell: bash
         run: |
-          summary_input=$(<summary_input.txt)
+          summary_input=$(cat summary_input.txt)
           json_data=$(jq -n --arg diff "$summary_input" '{diff: $diff}')
-          response=$(curl -s -X POST "$API_URL" \
-            -H "Content-Type: application/json" \
-            -d "$json_data" \
-            -w "%{http_code}" -o response.json)
+          response=$(curl -s -X POST "$API_URL" -H "Content-Type: application/json" -d "$json_data" -w "%{http_code}" -o response.json)
           if [ "$response" != "200" ]; then
             echo "API call failed with status $response"
             cat response.json
@@ -91,4 +87,3 @@ jobs:
           draft: true
           base: main
           branch: ${{ steps.branch.outputs.name }}
-```
