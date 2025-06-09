@@ -9,48 +9,58 @@ on:
 jobs:
   create_pr_with_summary:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Get list of changed files compared to main
-      id: changes
-      run: |
-        echo "::set-output name=diff::$(git diff origin/main --name-only)"
-        echo "::set-output name=full_diff::$(git diff origin/main)"
+      - name: Fetch main branch
+        run: git fetch origin main
 
-    - name: Fetch changed files content and build summary input
-      id: build_summary_input
-      run: |
-        files=$(echo "${{ steps.changes.outputs.diff }}" | tr '\n' ' ')
-        summary_input=""
-        for file in $files; do
-          if [ -f "$file" ]; then
-            summary_input+="### $file\n"
-            summary_input+=$(cat "$file")
-            summary_input+="\n\n"
-          fi
-        done
-        echo "::set-output name=summary_input::$summary_input"
+      - name: Get list of changed files compared to main
+        id: changes
+        run: |
+          files=$(git diff origin/main --name-only)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Call AI summarizer API
-      id: ai_summary
-      run: |
-        summary_input="${{ steps.build_summary_input.outputs.summary_input }}"
-        echo "Summary input length: ${#summary_input}"
-        response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize
- \
-          -H "Content-Type: application/json" \
-          -d "{\"diff\": \"$summary_input\"}")
-        echo "::set-output name=summary::$(echo $response | jq -r '.summary')"
+      - name: Build summary input from changed files
+        id: build_summary_input
+        run: |
+          summary_input=""
+          for file in ${{ steps.changes.outputs.files }}; do
+            if [ -f "$file" ]; then
+              summary_input+="### $file\n"
+              summary_input+=$(cat "$file")
+              summary_input+="\n\n"
+            fi
+          done
+          echo "summary_input<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$summary_input" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Create draft pull request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.PAT_TOKEN }}
-        commit-message: "Auto PR: Update with AI summary"
-        title: "Auto PR with AI summary"
-        body: ${{ steps.ai_summary.outputs.summary }}
-        draft: true
-        base: main
-        branch: ${{ github.ref_name }}
+      - name: Call AI summarizer API
+        id: ai_summary
+        run: |
+          # Safely encode JSON with jq
+          json_data=$(jq -n --arg diff "${{ steps.build_summary_input.outputs.summary_input }}" '{diff: $diff}')
+          response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize \
+            -H "Content-Type: application/json" \
+            -d "$json_data")
+          summary=$(echo "$response" | jq -r '.summary')
+          echo "summary=$summary" >> $GITHUB_ENV
+
+      - name: Get branch name
+        run: echo "branch_name=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
+
+      - name: Create draft pull request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          commit-message: "Auto PR: Update with AI summary"
+          title: "Auto PR with AI summary"
+          body: ${{ env.summary }}
+          draft: true
+          base: main
+          branch: ${{ env.branch_name }}
