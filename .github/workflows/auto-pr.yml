@@ -1,3 +1,4 @@
+```yaml
 name: Auto Create Draft PR with AI Summary
 
 on:
@@ -51,7 +52,7 @@ jobs:
       - name: Call AI summarizer API
         id: ai_summary
         env:
-          API_URL: ${{ secrets.AI_SUMMARIZER_URL }}  # Store in secrets
+          API_URL: ${{ secrets.AI_SUMMARIZER_URL }}
         shell: bash
         run: |
           summary_input=$(<summary_input.txt)
@@ -90,3 +91,4 @@ jobs:
           draft: true
           base: main
           branch: ${{ steps.branch.outputs.name }}
+```
