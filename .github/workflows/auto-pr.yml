@@ -1,56 +1,31 @@
-name: Auto Create Draft PR with AI Summary
+name: Generate PR Summary with Grok AI
 
 on:
-  push:
-    branches-ignore:
-      - main
-      - master
+  pull_request:
+    types: [opened, reopened]
 
 jobs:
-  create_pr_with_summary:
+  generate-pr-summary:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Get list of changed files compared to main
-      id: changes
-      run: |
-        echo "::set-output name=diff::$(git diff origin/main --name-only)"
-        echo "::set-output name=full_diff::$(git diff origin/main)"
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-    - name: Fetch changed files content and build summary input
-      id: build_summary_input
-      run: |
-        files=$(echo "${{ steps.changes.outputs.diff }}" | tr '\n' ' ')
-        summary_input=""
-        for file in $files; do
-          if [ -f "$file" ]; then
-            summary_input+="### $file\n"
-            summary_input+=$(cat "$file")
-            summary_input+="\n\n"
-          fi
-        done
-        echo "::set-output name=summary_input::$summary_input"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests openai
 
-    - name: Call AI summarizer API
-      id: ai_summary
-      run: |
-        summary_input="${{ steps.build_summary_input.outputs.summary_input }}"
-        echo "Summary input length: ${#summary_input}"
-        response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize
- \
-          -H "Content-Type: application/json" \
-          -d "{\"diff\": \"$summary_input\"}")
-        echo "::set-output name=summary::$(echo $response | jq -r '.summary')"
-
-    - name: Create draft pull request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.PAT_TOKEN }}
-        commit-message: "Auto PR: Update with AI summary"
-        title: "Auto PR with AI summary"
-        body: ${{ steps.ai_summary.outputs.summary }}
-        draft: true
-        base: main
-        branch: ${{ github.ref_name }}
+      - name: Run PR summary generator
+        run: python generate_pr_summary.py
