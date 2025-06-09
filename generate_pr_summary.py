@@ -9,6 +9,7 @@ class AIOperations:
         self.provider = provider
         self.api_key = api_key or os.getenv("XAI_API_KEY")
         self.base_url = base_url
+        print(f"API Key (first 5 chars, last 5 chars): {self.api_key[:5]}...{self.api_key[-5:]}")
         self.client = self._initialize_client()
 
     def _initialize_client(self):
@@ -16,12 +17,28 @@ class AIOperations:
         if self.provider == "xai":
             return OpenAI(api_key=self.api_key, base_url=self.base_url)
         elif self.provider == "openai":
-            return OpenAI(api_key=self.api_key)  # OpenAI uses default base_url
+            return OpenAI(api_key=self.api_key)
         else:
             raise ValueError(f"Unsupported AI provider: {self.provider}")
 
+    def test_api(self):
+        """Test the API key with a simple request."""
+        try:
+            response = self.client.chat.completions.create(
+                model="grok-beta",
+                messages=[{"role": "user", "content": "Test API key"}],
+                max_tokens=10
+            )
+            print(f"API Test Success: {response.choices[0].message.content}")
+            return True
+        except Exception as e:
+            print(f"API Test Failed: {str(e)}")
+            return False
+
     def generate_summary(self, prompt, model="grok-beta", max_tokens=500):
         """Generate a summary using the AI provider's API."""
+        if not self.test_api():
+            return "Error: API key test failed, cannot generate summary."
         try:
             response = self.client.chat.completions.create(
                 model=model,
