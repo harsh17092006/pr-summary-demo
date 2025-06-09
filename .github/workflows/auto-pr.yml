@@ -1,72 +1,31 @@
-name: Auto Create Draft PR with AI Summary
+name: Generate PR Summary with Grok AI
 
 on:
-  push:
-    branches-ignore:
-      - main
-      - master
+  pull_request:
+    types: [opened, reopened]
 
 jobs:
-  create_pr_with_summary:
+  generate-pr-summary:
     runs-on: ubuntu-latest
-
+    permissions:
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}  # Changed from GITHUB_TOKEN to PAT_TOKEN
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Fetch main branch
-        run: git fetch origin main
-
-      - name: Get list of changed files compared to main
-        id: changes
-        run: |
-          files=$(git diff origin/main --name-only | tr '\n' ' ')
-          echo "files=$files" >> $GITHUB_OUTPUT
-
-      - name: Build summary input from changed files
-        id: build_summary_input
-        shell: bash
-        run: |
-          summary_file="summary_input.txt"
-          > "$summary_file"
-          for file in ${{ steps.changes.outputs.files }}; do
-            if [[ -f "$file" ]]; then
-              echo "### $file" >> "$summary_file"
-              cat "$file" >> "$summary_file"
-              echo -e "\n\n" >> "$summary_file"
-            fi
-          done
-          summary_input=$(cat "$summary_file")
-          echo "summary_input<<EOF" >> $GITHUB_OUTPUT
-          echo "$summary_input" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Call AI summarizer API
-        id: ai_summary
-        shell: bash
-        run: |
-          summary_input="${{ steps.build_summary_input.outputs.summary_input }}"
-          echo "Summary input length: ${#summary_input}"
-          json_data=$(jq -n --arg diff "$summary_input" '{diff: $diff}')
-          response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize \
-            -H "Content-Type: application/json" \
-            -d "$json_data")
-          summary=$(echo "$response" | jq -r '.summary')
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo "$summary" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Get branch name
-        id: branch
-        run: echo "name=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
-
-      - name: Create draft pull request
-        uses: peter-evans/create-pull-request@v5
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          token: ${{ secrets.PAT_TOKEN }}
-          commit-message: "Auto PR: Update with AI summary"
-          title: "Auto PR with AI summary"
-          body: ${{ steps.ai_summary.outputs.summary }}
-          draft: true
-          base: main
-          branch: ${{ steps.branch.outputs.name }}
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests openai
+
+      - name: Run PR summary generator
+        run: python generate_pr_summary.py
