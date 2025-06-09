@@ -6,13 +6,19 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   create_pr_with_summary:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for accurate diff
 
       - name: Fetch main branch
         run: git fetch origin main
@@ -20,7 +26,8 @@ jobs:
       - name: Get list of changed files
         id: changes
         run: |
-          echo "files=$(git diff origin/main --name-only | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          files=$(git diff origin/main...HEAD --name-only --diff-filter=ACM | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
 
       - name: Build summary input from changed files
         id: build_summary_input
@@ -28,39 +35,58 @@ jobs:
         run: |
           summary_input=""
           for file in ${{ steps.changes.outputs.files }}; do
-            if [ -f "$file" ]; then
-              summary_input+="### $file"$'\n'
-              summary_input+=$(cat "$file")
-              summary_input+=$'\n\n'
+            # Skip .env and non-text files, check if file exists
+            if [[ "$file" != *.env ]] && [ -f "$file" ] && file "$file" | grep -q text; then
+              summary_input+="### $file\n"
+              summary_input+=$(git diff origin/main...HEAD -- "$file" | head -n 100)
+              summary_input+="\n\n"
             fi
           done
-          echo "$summary_input" > summary_input.txt
+          if [ -z "$summary_input" ]; then
+            echo "No text files changed, using default summary."
+            summary_input="No significant text file changes detected."
+          fi
+          printf "%s" "$summary_input" > summary_input.txt
 
       - name: Call AI summarizer API
         id: ai_summary
+        env:
+          API_URL: ${{ secrets.AI_SUMMARIZER_URL }}  # Store in secrets
         shell: bash
         run: |
           summary_input=$(<summary_input.txt)
           json_data=$(jq -n --arg diff "$summary_input" '{diff: $diff}')
-          response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize \
+          response=$(curl -s -X POST "$API_URL" \
             -H "Content-Type: application/json" \
-            -d "$json_data")
-          summary=$(echo "$response" | jq -r '.summary')
+            -d "$json_data" \
+            -w "%{http_code}" -o response.json)
+          if [ "$response" != "200" ]; then
+            echo "API call failed with status $response"
+            cat response.json
+            exit 1
+          fi
+          summary=$(jq -r '.summary // empty' response.json)
+          if [ -z "$summary" ]; then
+            echo "No summary returned from API"
+            exit 1
+          fi
           echo "summary<<EOF" >> $GITHUB_OUTPUT
           echo "$summary" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Get branch name
         id: branch
-        run: echo "name=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
+        run: echo "name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
       - name: Create draft pull request
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.PAT_TOKEN }}
           commit-message: "Auto PR: Update with AI summary"
-          title: "Auto PR with AI summary"
-          body: ${{ steps.ai_summary.outputs.summary }}
+          title: "Auto PR: ${{ steps.branch.outputs.name }}"
+          body: |
+            **AI-Generated Summary**:
+            ${{ steps.ai_summary.outputs.summary }}
           draft: true
           base: main
           branch: ${{ steps.branch.outputs.name }}
