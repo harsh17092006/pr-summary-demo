@@ -31,13 +31,12 @@ jobs:
           > "$summary_file"
           for file in ${{ steps.changes.outputs.files }}; do
             if [[ -f "$file" ]]; then
-              echo -e "### $file\n" >> "$summary_file"
+              echo "### $file" >> "$summary_file"
               cat "$file" >> "$summary_file"
               echo -e "\n\n" >> "$summary_file"
             fi
           done
           summary_input=$(cat "$summary_file")
-          # Write output safely
           echo "summary_input<<EOF" >> $GITHUB_OUTPUT
           echo "$summary_input" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
