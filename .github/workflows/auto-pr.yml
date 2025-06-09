@@ -17,13 +17,10 @@ jobs:
       - name: Fetch main branch
         run: git fetch origin main
 
-      - name: Get list of changed files compared to main
+      - name: Get list of changed files
         id: changes
         run: |
-          files=$(git diff origin/main --name-only)
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$files" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "files=$(git diff origin/main --name-only | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
       - name: Build summary input from changed files
         id: build_summary_input
@@ -32,27 +29,29 @@ jobs:
           for file in ${{ steps.changes.outputs.files }}; do
             if [ -f "$file" ]; then
               summary_input+="### $file\n"
-              summary_input+=$(cat "$file")
-              summary_input+="\n\n"
+              summary_input+="$(cat "$file")\n\n"
             fi
           done
-          echo "summary_input<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$summary_input" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Store it in an output file
+          echo "$summary_input" > summary_input.txt
+        shell: bash
 
       - name: Call AI summarizer API
         id: ai_summary
         run: |
-          # Safely encode JSON with jq
-          json_data=$(jq -n --arg diff "${{ steps.build_summary_input.outputs.summary_input }}" '{diff: $diff}')
+          summary_input=$(<summary_input.txt)
+          json_data=$(jq -n --arg diff "$summary_input" '{diff: $diff}')
           response=$(curl -s -X POST https://f225-2401-4900-a1c8-cf81-34ae-d187-ba4f-21a.ngrok-free.app/summarize \
             -H "Content-Type: application/json" \
             -d "$json_data")
           summary=$(echo "$response" | jq -r '.summary')
-          echo "summary=$summary" >> $GITHUB_ENV
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "$summary" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Get branch name
-        run: echo "branch_name=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
+        id: branch
+        run: echo "name=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
 
       - name: Create draft pull request
         uses: peter-evans/create-pull-request@v5
@@ -60,7 +59,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           commit-message: "Auto PR: Update with AI summary"
           title: "Auto PR with AI summary"
-          body: ${{ env.summary }}
+          body: ${{ steps.ai_summary.outputs.summary }}
           draft: true
           base: main
-          branch: ${{ env.branch_name }}
+          branch: ${{ steps.branch.outputs.name }}
