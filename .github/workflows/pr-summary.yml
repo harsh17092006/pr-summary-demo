@@ -32,13 +32,15 @@ jobs:
         run: |
           BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
           SUMMARY=$(cat summary.txt)
-
-          gh pr edit ${{ github.event.pull_request.number }} --body "### 🧠 AI-Generated Summary
+          gh pr edit ${{ github.event.pull_request.number }} --body "$(cat <<EOF
+### 🧠 AI-Generated Summary
 
 $SUMMARY
 
 ---
 
-$BODY"
+$BODY
+EOF
+)"
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
