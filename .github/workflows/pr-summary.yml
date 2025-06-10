@@ -149,7 +149,7 @@ jobs:
                               {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
                               {"role": "user", "content": prompt}
                           ],
-                          "max_tokens": 1024,
+                          "max_tokens": 4096,
                           "temperature": 0.4
                       }
                   )
