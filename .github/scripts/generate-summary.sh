@@ -24,12 +24,13 @@ if [[ -z "${GROQ_API_KEY:-}" ]]; then
   exit 3
 fi
 
-# Fetch complete git history for proper diff base
+# Fetch main branch fully
 if ! git fetch --unshallow origin main 2>/dev/null; then
-  git fetch origin main
+  echo "ℹ️ Shallow fetch, trying full fetch."
+  git fetch origin main || { echo "❌ Failed to fetch origin/main. Exiting."; exit 1; }
 fi
 
-# Ensure origin/main exists
+# Check if origin/main exists
 if ! git show-ref --verify --quiet refs/remotes/origin/main; then
   echo "❌ Remote branch origin/main not found after fetch. Exiting."
   exit 1
@@ -37,10 +38,10 @@ fi
 
 # Find merge base and generate diff
 if git merge-base origin/main HEAD &>/dev/null; then
-  git diff origin/main...HEAD > pr_diff.txt || true
+  git diff origin/main...HEAD > pr_diff.txt || { echo "❌ Failed to generate diff. Exiting."; exit 1; }
 else
-  echo "⚠️ No merge base found. Falling back to full diff."
-  git diff > pr_diff.txt || true
+  echo "⚠️ No merge base found. Generating full diff instead."
+  git diff > pr_diff.txt || { echo "❌ Failed to generate full diff. Exiting."; exit 1; }
 fi
 
 # Check if pr_diff.txt was successfully created and is not empty
@@ -50,7 +51,10 @@ if [[ ! -s pr_diff.txt ]]; then
 fi
 
 # Trim diff to 10,000 characters and escape as JSON string
-DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .)
+if ! DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .); then
+  echo "❌ Failed to process diff content with jq. Exiting."
+  exit 6
+fi
 
 # Prepare Groq request payload
 read -r -d '' DATA <<EOF
