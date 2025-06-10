@@ -1,25 +1,28 @@
 #!/bin/bash
 
-# Exit on error
-set -e
+# Exit on error and show commands
+set -euo pipefail
 
-# STEP 1: Generate full PR diff and save to file
-git fetch origin main
-git fetch origin main || true
+# STEP 1: Fetch complete git history for proper diff base
+git fetch --unshallow origin main || git fetch origin main
 
-# Check if there's a merge base; fallback to full diff if not
-if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+# STEP 2: Check for a merge base between origin/main and HEAD
+if git merge-base origin/main HEAD &>/dev/null; then
   git diff origin/main...HEAD > pr_diff.txt
 else
   echo "⚠️ No merge base found. Falling back to full diff."
   git diff > pr_diff.txt
 fi
 
+# STEP 3: Trim diff to 10,000 characters and escape it as JSON string
+if ! command -v jq &>/dev/null; then
+  echo "jq is required but not installed. Exiting."
+  exit 2
+fi
 
-# STEP 2: Trim diff to 10,000 characters and escape it as JSON string
 DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .)
 
-# STEP 3: Prepare Groq request payload
+# STEP 4: Prepare Groq request payload
 read -r -d '' DATA <<EOF
 {
   "model": "llama3-70b-8192",
@@ -36,13 +39,18 @@ read -r -d '' DATA <<EOF
 }
 EOF
 
-# STEP 4: Make request to Groq
+# STEP 5: Make request to Groq
+if [[ -z "${GROQ_API_KEY:-}" ]]; then
+  echo "GROQ_API_KEY environment variable not set. Exiting."
+  exit 3
+fi
+
 RESPONSE=$(curl -s https://api.groq.com/openai/v1/chat/completions \
   -H "Authorization: Bearer $GROQ_API_KEY" \
   -H "Content-Type: application/json" \
   -d "$DATA")
 
-# STEP 5: Extract and save AI-generated summary
+# STEP 6: Extract and save AI-generated summary
 SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
 echo "$SUMMARY" > summary.txt
 
