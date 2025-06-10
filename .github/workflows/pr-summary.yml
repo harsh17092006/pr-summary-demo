@@ -30,18 +30,9 @@ jobs:
 
       - name: Update PR description
         run: |
-          BODY="$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)"
-          SUMMARY="$(cat summary.txt)"
-          gh pr edit ${{ github.event.pull_request.number }} --body "$(
-cat <<EOF
-### 🧠 AI-Generated Summary
-
-$SUMMARY
-
----
-
-$BODY
-EOF
-)"
+          BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
+          SUMMARY=$(cat summary.txt)
+          NEW_BODY="### 🧠 AI-Generated Summary\n\n${SUMMARY}\n\n---\n\n${BODY}"
+          gh pr edit ${{ github.event.pull_request.number }} --body "$NEW_BODY"
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
