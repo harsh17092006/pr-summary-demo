@@ -1,0 +1,12 @@
+name: AI Summary on PR
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder step
+        run: echo "We will replace this with actual steps"
