@@ -30,9 +30,10 @@ jobs:
 
       - name: Update PR description
         run: |
-          BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
-          SUMMARY=$(cat summary.txt)
-          gh pr edit ${{ github.event.pull_request.number }} --body "$(cat <<EOF
+          BODY="$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)"
+          SUMMARY="$(cat summary.txt)"
+          gh pr edit ${{ github.event.pull_request.number }} --body "$(
+cat <<EOF
 ### 🧠 AI-Generated Summary
 
 $SUMMARY
