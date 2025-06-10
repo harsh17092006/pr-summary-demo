@@ -4,7 +4,7 @@ DIFF=$(cat pr_diff.txt | head -c 10000 | jq -Rs .)
 
 read -r -d '' DATA <<EOF
 {
-  "model": "mixtral-8x7b-32768",
+  "model": "llama3-70b-8192",
   "messages": [
     {
       "role": "system",
