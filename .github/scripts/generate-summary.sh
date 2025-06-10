@@ -15,11 +15,22 @@ command -v gh >/dev/null || { echo "❌ gh not installed."; exit 2; }
 DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | awk '{print $NF}')
 [[ -n "$DEFAULT_BRANCH" ]] || { echo "❌ Could not determine default branch."; exit 1; }
 
-# Fetch default branch
-if git rev-parse --is-shallow-repository >/dev/null; then
-  echo "ℹ️ Shallow repository detected, fetching full history."
-  git fetch --unshallow origin "$DEFAULT_BRANCH" || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; exit 1; }
+# Check shallow status
+echo "ℹ️ Checking if repository is shallow."
+if [[ -f .git/shallow ]]; then
+  echo "ℹ️ Shallow repository detected, attempting unshallow fetch."
+  if ! git fetch --unshallow origin "$DEFAULT_BRANCH" 2>&1 | tee fetch_output.log; then
+    if grep -q "does not make sense" fetch_output.log; then
+      echo "ℹ️ Repository is already complete, falling back to regular fetch."
+      git fetch origin "$DEFAULT_BRANCH" || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; exit 1; }
+    else
+      echo "❌ Failed to fetch origin/$DEFAULT_BRANCH (unshallow)."
+      cat fetch_output.log
+      exit 1
+    fi
+  fi
 else
+  echo "ℹ️ Repository is not shallow, performing regular fetch."
   git fetch origin "$DEFAULT_BRANCH" || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; exit 1; }
 fi
 git show-ref --verify --quiet refs/remotes/origin/"$DEFAULT_BRANCH" || { echo "❌ Branch origin/$DEFAULT_BRANCH not found."; exit 1; }
