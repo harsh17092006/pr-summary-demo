@@ -5,7 +5,16 @@ set -e
 
 # STEP 1: Generate full PR diff and save to file
 git fetch origin main
-git diff origin/main...HEAD > pr_diff.txt
+ggit fetch origin main || true
+
+# Check if there's a merge base; fallback to full diff if not
+if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+  git diff origin/main...HEAD > pr_diff.txt
+else
+  echo "⚠️ No merge base found. Falling back to full diff."
+  git diff > pr_diff.txt
+fi
+
 
 # STEP 2: Trim diff to 10,000 characters and escape it as JSON string
 DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .)
