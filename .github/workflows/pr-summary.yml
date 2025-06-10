@@ -78,7 +78,7 @@ jobs:
                       "  - The overall goal of the changes (e.g., new feature, performance optimization).\n"
                       "  - The combined effect on the codebase (e.g., enhanced functionality, improved performance).\n"
                       "  - Differences between the previous code state (e.g., what was missing, limited, or problematic) and the current code state (e.g., what’s now enabled or improved).\n\n"
-                      "Keep the summary concise (300-450 words per file), clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several new functions,' list each function explicitly with its details). "
+                      "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several new functions,' list each function explicitly with its details). "
                       "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code changes detected.'\n\n"
                       "Below are example summaries to guide the format and depth:\n\n"
                       "**Example 1: Python (utils.py)**\n"
