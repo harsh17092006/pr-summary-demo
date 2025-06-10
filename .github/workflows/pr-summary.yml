@@ -10,7 +10,9 @@ jobs:
 
     steps:
       - name: Checkout PR code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history
 
       - name: Install GitHub CLI and jq
         run: |
@@ -22,17 +24,41 @@ jobs:
           jq --version
           gh --version
 
+      - name: Verify GROQ_API_KEY
+        run: |
+          if [[ -z "${GROQ_API_KEY}" ]]; then
+            echo "❌ GROQ_API_KEY is not set in GitHub Secrets."
+            exit 1
+          fi
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
       - name: Run Groq Summary Script
-        run: bash .github/scripts/generate-summary.sh
+        run: |
+          bash .github/scripts/generate-summary.sh 2>&1 | tee script_output.log
+          if [[ ! -f summary.txt ]]; then
+            echo "❌ Script failed to generate summary.txt. Check logs:"
+            cat script_output.log
+            exit 1
+          fi
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
 
       - name: Update PR description
         run: |
+          if [[ ! -f summary.txt ]]; then
+            echo "❌ summary.txt not found."
+            exit 1
+          fi
           BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
+          if [[ $? -ne 0 ]]; then
+            echo "❌ Failed to fetch PR body."
+            exit 1
+          fi
           SUMMARY=$(cat summary.txt)
           NEW_BODY="### 🧠 AI-Generated Summary\n\n${SUMMARY}\n\n---\n\n${BODY}"
-          gh pr edit ${{ github.event.pull_request.number }} --body "$NEW_BODY"
+          echo -e "$NEW_BODY" | gh pr edit ${{ github.event.pull_request.number }} --body-file -
+          echo "✅ PR description updated."
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
