@@ -4,7 +4,15 @@
 set -euo pipefail
 
 # STEP 1: Fetch complete git history for proper diff base
-git fetch --unshallow origin main || git fetch origin main
+if ! git fetch --unshallow origin main 2>/dev/null; then
+  git fetch origin main
+fi
+
+# Ensure origin/main exists
+if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+  echo "❌ Remote branch origin/main not found after fetch. Exiting."
+  exit 1
+fi
 
 # STEP 2: Check for a merge base between origin/main and HEAD
 if git merge-base origin/main HEAD &>/dev/null; then
@@ -13,7 +21,6 @@ else
   echo "⚠️ No merge base found. Falling back to full diff."
   git diff > pr_diff.txt
 fi
-
 # STEP 3: Trim diff to 10,000 characters and escape it as JSON string
 if ! command -v jq &>/dev/null; then
   echo "jq is required but not installed. Exiting."
