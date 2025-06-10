@@ -50,9 +50,15 @@ if [[ ! -s pr_diff.txt ]]; then
   exit 5
 fi
 
-# Trim diff to 10,000 characters and escape as JSON string
+# Ensure pr_diff.txt is not empty and process with jq
+if [[ ! -s pr_diff.txt ]]; then
+  echo "❌ No diff content found in pr_diff.txt. Ensure your branch has changes compared to origin/main. Exiting."
+  exit 5
+fi
+
 if ! DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .); then
-  echo "❌ Failed to process diff content with jq. Exiting."
+  echo "❌ Failed to process diff content with jq. Showing file content for debugging:"
+  cat pr_diff.txt
   exit 6
 fi
 
