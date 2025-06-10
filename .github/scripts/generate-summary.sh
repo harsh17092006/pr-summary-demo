@@ -53,10 +53,14 @@ if [[ ! -s pr_diff.txt ]]; then
 fi
 
 # Convert and process diff content
-DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .)
-if [[ $? -ne 0 ]]; then
-  echo "❌ Failed to process diff content with iconv or jq. Check pr_diff.txt for issues."
-  exit 6
+echo "Debug: Checking pr_diff.txt contents"
+cat pr_diff.txt
+
+if ! DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .); then
+    echo "❌ Error while processing diff content with iconv or jq."
+    echo "Debug: pr_diff.txt contents:"
+    cat pr_diff.txt
+    exit 6
 fi
 
 # Prepare Groq request payload
