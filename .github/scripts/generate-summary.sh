@@ -56,11 +56,11 @@ if [[ ! -s pr_diff.txt ]]; then
   exit 5
 fi
 
-if ! DIFF=$(head -c 10000 pr_diff.txt | jq -Rs .); then
+DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .) || {
   echo "❌ Failed to process diff content with jq. Showing file content for debugging:"
   cat pr_diff.txt
   exit 6
-fi
+}
 
 # Prepare Groq request payload
 read -r -d '' DATA <<EOF
