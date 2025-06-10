@@ -37,10 +37,16 @@ fi
 
 # Find merge base and generate diff
 if git merge-base origin/main HEAD &>/dev/null; then
-  git diff origin/main...HEAD > pr_diff.txt
+  git diff origin/main...HEAD > pr_diff.txt || true
 else
   echo "⚠️ No merge base found. Falling back to full diff."
-  git diff > pr_diff.txt
+  git diff > pr_diff.txt || true
+fi
+
+# Check if pr_diff.txt was successfully created and is not empty
+if [[ ! -s pr_diff.txt ]]; then
+  echo "❌ No diff content found. Ensure your branch has changes compared to origin/main. Exiting."
+  exit 5
 fi
 
 # Trim diff to 10,000 characters and escape as JSON string
