@@ -53,8 +53,19 @@ jobs:
               patch = file.get('patch', '')
               if patch:
                   prompt = (
-                      f"Summarize the following code changes in '{filename}' for a pull request description. "
-                      "Focus only on what has changed in the code, not on metadata, formatting or stylistic details:\n\n"
+                      f"You are an expert AI tasked with generating a detailed pull request description summarizing code changes in '{filename}'. "
+                      "Analyze the provided git diff patch and produce a concise, professional summary focusing solely on substantive code changes, "
+                      "ignoring metadata, formatting, or stylistic modifications (e.g., whitespace, comments, or variable renaming unless functionally significant). "
+                      "Structure the summary with bullet points under the following sections:\n\n"
+                      "- **Changes**: List specific code changes, such as added, removed, or modified functions, classes, methods, variables, or logic. "
+                      "Describe what was altered in each case (e.g., new parameters, changed conditions).\n"
+                      "- **Purpose**: Explain the overall intent or goal of these changes (e.g., adding a feature, fixing a bug, optimizing performance).\n"
+                      "- **Impact**: Describe the expected effects on the codebase, such as new functionality, improved performance, enhanced reliability, "
+                      "or changes in user experience. Mention any affected modules, dependencies, or APIs.\n"
+                      "- **Risks and Considerations**: Highlight potential risks (e.g., backward compatibility, performance degradation), edge cases, "
+                      "or dependencies that reviewers should verify. Note any required testing or follow-up actions.\n\n"
+                      "Keep the summary clear, concise (150-300 words), and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative language. "
+                      "Here is the git diff patch to analyze:\n\n"
                       f"{patch}"
                   )
                   groq_response = requests.post(
