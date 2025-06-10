@@ -12,17 +12,16 @@ jobs:
       - name: Checkout PR code
         uses: actions/checkout@v3
 
-      - name: Set up GitHub CLI
-        uses: cli/cli-action@v2
+      - name: Install GitHub CLI and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq gh
 
       - name: Get PR diff
         run: |
           gh pr diff ${{ github.event.pull_request.number }} > pr_diff.txt
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-
-      - name: Install jq
-        run: sudo apt-get install -y jq
 
       - name: Run Groq Summary Script
         run: bash .github/scripts/generate-summary.sh
@@ -36,10 +35,10 @@ jobs:
 
           gh pr edit ${{ github.event.pull_request.number }} --body "### 🧠 AI-Generated Summary
 
-          $SUMMARY
+$SUMMARY
 
-          ---
+---
 
-          $BODY"
+$BODY"
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
