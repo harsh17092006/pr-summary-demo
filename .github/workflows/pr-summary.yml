@@ -1,12 +1,45 @@
-name: AI Summary on PR
+name: AI PR Summary
 
 on:
   pull_request:
     types: [opened]
 
 jobs:
-  placeholder:
+  generate_summary:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Placeholder step
-        run: echo "We will replace this with actual steps"
+      - name: Checkout PR code
+        uses: actions/checkout@v3
+
+      - name: Set up GitHub CLI
+        uses: cli/cli-action@v2
+
+      - name: Get PR diff
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} > pr_diff.txt
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Run Groq Summary Script
+        run: bash .github/scripts/generate-summary.sh
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+      - name: Update PR description
+        run: |
+          BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
+          SUMMARY=$(cat summary.txt)
+
+          gh pr edit ${{ github.event.pull_request.number }} --body "### 🧠 AI-Generated Summary
+
+$SUMMARY
+
+---
+
+$BODY"
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
