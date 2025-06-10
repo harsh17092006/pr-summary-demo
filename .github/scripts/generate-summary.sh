@@ -5,7 +5,7 @@ set -e
 
 # STEP 1: Generate full PR diff and save to file
 git fetch origin main
-ggit fetch origin main || true
+git fetch origin main || true
 
 # Check if there's a merge base; fallback to full diff if not
 if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
