@@ -1,9 +1,6 @@
 #!/bin/bash
 
-# Exit on error, unset variable, or failed pipe
 set -euo pipefail
-
-# Debug: Print all executed commands
 set -x
 
 # Ensure jq is installed
@@ -44,23 +41,23 @@ else
   git diff > pr_diff.txt || { echo "❌ Failed to generate full diff. Exiting."; exit 1; }
 fi
 
-# Check if pr_diff.txt was successfully created and is not empty
+# Debugging: Print pr_diff.txt content
+echo "----- pr_diff.txt contents -----"
+cat pr_diff.txt
+echo "-------------------------------"
+
+# Ensure pr_diff.txt is not empty
 if [[ ! -s pr_diff.txt ]]; then
-  echo "❌ No diff content found. Ensure your branch has changes compared to origin/main. Exiting."
+  echo "❌ pr_diff.txt is empty or missing. Exiting."
   exit 5
 fi
 
-# Ensure pr_diff.txt is not empty and process with jq
-if [[ ! -s pr_diff.txt ]]; then
-  echo "❌ No diff content found in pr_diff.txt. Ensure your branch has changes compared to origin/main. Exiting."
-  exit 5
-fi
-
-DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .) || {
-  echo "❌ Failed to process diff content with jq. Showing file content for debugging:"
-  cat pr_diff.txt
+# Convert and process diff content
+DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .)
+if [[ $? -ne 0 ]]; then
+  echo "❌ Failed to process diff content with iconv or jq. Check pr_diff.txt for issues."
   exit 6
-}
+fi
 
 # Prepare Groq request payload
 read -r -d '' DATA <<EOF
