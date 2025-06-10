@@ -38,15 +38,12 @@ jobs:
           #!/bin/bash
           set -euo pipefail
           set -x
-
           # Clean up temporary files on exit, excluding summary.txt
           trap 'rm -f pr_diff.txt response_body.txt response_debug.txt fetch_output.log' EXIT
-
           # Check dependencies
           command -v jq >/dev/null || { echo "❌ jq not installed."; exit 1; }
           command -v gh >/dev/null || { echo "❌ gh not installed."; exit 1; }
           [[ -n "${GROQ_API_KEY:-}" && "${#GROQ_API_KEY}" -ge 10 ]] || { echo "❌ GROQ_API_KEY invalid or missing."; exit 1; }
-
           # Debug: Log Git and PR info
           echo "ℹ️ Git remote info:"
           git remote -v
@@ -54,7 +51,6 @@ jobs:
           git rev-parse --abbrev-ref HEAD
           echo "ℹ️ PR head SHA: ${{ github.event.pull_request.head.sha }}"
           echo "ℹ️ PR base branch: ${{ github.event.pull_request.base.ref }}"
-
           # Get default branch from GitHub Actions context
           DEFAULT_BRANCH="${{ github.event.pull_request.base.ref }}"
           if [[ -z "$DEFAULT_BRANCH" ]]; then
@@ -62,18 +58,15 @@ jobs:
             DEFAULT_BRANCH="main"
           fi
           echo "ℹ️ Default branch: $DEFAULT_BRANCH"
-
           # Fetch default branch
           echo "ℹ️ Fetching origin/$DEFAULT_BRANCH"
           git fetch origin "$DEFAULT_BRANCH" 2>&1 | tee fetch_output.log || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; cat fetch_output.log; exit 1; }
           git show-ref --verify --quiet refs/remotes/origin/"$DEFAULT_BRANCH" || { echo "❌ Branch origin/$DEFAULT_BRANCH not found."; exit 1; }
-
           # Handle detached HEAD state
           if [[ $(git rev-parse --abbrev-ref HEAD) == "HEAD" ]]; then
             echo "ℹ️ Detached HEAD detected, checking out PR commit."
             git checkout "${{ github.event.pull_request.head.sha }}" || { echo "❌ Failed to checkout PR commit."; exit 1; }
           fi
-
           # Generate diff
           echo "ℹ️ Generating diff against origin/$DEFAULT_BRANCH"
           if git merge-base origin/"$DEFAULT_BRANCH" HEAD >/dev/null; then
@@ -82,7 +75,6 @@ jobs:
             echo "⚠️ No merge base found. Generating full diff."
             git diff > pr_diff.txt || { echo "❌ Failed to generate full diff."; exit 1; }
           fi
-
           # Debug: Check diff file
           echo "ℹ️ pr_diff.txt contents:"
           if [[ -f pr_diff.txt ]]; then
@@ -90,14 +82,12 @@ jobs:
           else
             echo "⚠️ pr_diff.txt is missing."
           fi
-
           # Handle empty diff
           if [[ ! -s pr_diff.txt ]]; then
             echo "No code changes detected in the pull request." > summary.txt
             echo "✅ Summary generated (no changes)."
             exit 0
           fi
-
           # Process diff (truncate to 500 lines to avoid API limits)
           if [[ $(wc -l < pr_diff.txt) -gt 500 ]]; then
             echo "⚠️ Diff exceeds 500 lines; truncating."
@@ -106,15 +96,12 @@ jobs:
             DIFF=$(iconv -c -t utf-8 < pr_diff.txt)
           fi
           [[ -n "$DIFF" ]] || { echo "❌ iconv produced empty output."; exit 1; }
-
           # Convert to JSON
           DIFF_JSON=$(echo "$DIFF" | jq -Rs .) || { echo "❌ jq processing failed."; exit 1; }
-
           # Prepare API payload
           MODEL="llama3-70b-8192"
           DATA=$(jq -n --arg model "$MODEL" --arg diff "$DIFF" \
             '{ "model": $model, "messages": [ { "role": "system", "content": "You are an expert AI that summarizes GitHub pull request diffs into clean, concise summaries for reviewers. Focus on what changed, why, and any risks or special notes." }, { "role": "user", "content": $diff } ] }')
-
           # Make API request with retries
           for attempt in {1..3}; do
             RESPONSE=$(curl -s -w "%{http_code}" https://api.groq.com/openai/v1/chat/completions \
@@ -135,11 +122,9 @@ jobs:
             exit 0
           fi
           RESPONSE=$(cat response_body.txt)
-
           # Save response for debugging
           echo "$RESPONSE" > response_debug.txt
           echo "ℹ️ API response saved to response_debug.txt"
-
           # Extract summary
           if ! echo "$RESPONSE" | jq -e '.choices[0].message.content' >/dev/null; then
             echo "❌ Invalid API response: $RESPONSE"
@@ -149,7 +134,6 @@ jobs:
           fi
           SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
           [[ -n "$SUMMARY" && "$SUMMARY" != "null" ]] || { echo "❌ Empty summary in API response."; echo "Unable to generate AI summary due to empty response." > summary.txt; exit 0; }
-
           # Save summary
           echo "$SUMMARY" > summary.txt
           echo "✅ AI Summary generated."
