@@ -56,10 +56,19 @@ fi
 echo "Debug: Checking pr_diff.txt contents"
 cat pr_diff.txt
 
-if ! DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8 | jq -Rs .); then
-    echo "❌ Error while processing diff content with iconv or jq."
-    echo "Debug: pr_diff.txt contents:"
-    cat pr_diff.txt
+# Process the diff with iconv and jq, with error handling and validation
+if ! DIFF=$(head -c 10000 pr_diff.txt | iconv -c -t utf-8); then
+    echo "❌ Error while processing diff content with iconv. Exiting."
+    exit 6
+fi
+
+if [[ -z "$DIFF" ]]; then
+    echo "❌ iconv produced empty output. Exiting."
+    exit 6
+fi
+
+if ! DIFF_JSON=$(echo "$DIFF" | jq -Rs .); then
+    echo "❌ Error while processing diff content with jq. Exiting."
     exit 6
 fi
 
@@ -74,7 +83,7 @@ read -r -d '' DATA <<EOF
     },
     {
       "role": "user",
-      "content": $DIFF
+      "content": $DIFF_JSON
     }
   ]
 }
