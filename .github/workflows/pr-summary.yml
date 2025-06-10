@@ -2,183 +2,87 @@ name: AI PR Summary
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened]
 
 jobs:
-  generate_summary:
+  ai-pr-summary:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout PR code
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0  # Fetch full history for accurate diff
+          python-version: '3.10'
 
-      - name: Install GitHub CLI and jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq gh
+      - name: Install dependencies
+        run: pip install requests
 
-      - name: Verify jq and gh Installation
-        run: |
-          jq --version
-          gh --version
-
-      - name: Verify GROQ_API_KEY
-        run: |
-          if [[ -z "${GROQ_API_KEY}" ]]; then
-            echo "❌ GROQ_API_KEY is not set in GitHub Secrets."
-            exit 1
-          fi
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-
-      - name: Generate AI Summary
-        run: |
-          #!/bin/bash
-          set -euo pipefail
-          set -x
-          # Clean up temporary files on exit, excluding summary.txt
-          trap 'rm -f pr_diff.txt response_body.txt response_debug.txt fetch_output.log' EXIT
-          # Check dependencies
-          command -v jq >/dev/null || { echo "❌ jq not installed."; exit 1; }
-          command -v gh >/dev/null || { echo "❌ gh not installed."; exit 1; }
-          [[ -n "${GROQ_API_KEY:-}" && "${#GROQ_API_KEY}" -ge 10 ]] || { echo "❌ GROQ_API_KEY invalid or missing."; exit 1; }
-          # Debug: Log Git and PR info
-          echo "ℹ️ Git remote info:"
-          git remote -v
-          echo "ℹ️ Current branch:"
-          git rev-parse --abbrev-ref HEAD
-          echo "ℹ️ PR head SHA: ${{ github.event.pull_request.head.sha }}"
-          echo "ℹ️ PR base branch: ${{ github.event.pull_request.base.ref }}"
-          # Get default branch from GitHub Actions context
-          DEFAULT_BRANCH="${{ github.event.pull_request.base.ref }}"
-          if [[ -z "$DEFAULT_BRANCH" ]]; then
-            echo "⚠️ Could not get base branch from GitHub context, falling back to main."
-            DEFAULT_BRANCH="main"
-          fi
-          echo "ℹ️ Default branch: $DEFAULT_BRANCH"
-          # Fetch default branch
-          echo "ℹ️ Fetching origin/$DEFAULT_BRANCH"
-          git fetch origin "$DEFAULT_BRANCH" 2>&1 | tee fetch_output.log || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; cat fetch_output.log; exit 1; }
-          git show-ref --verify --quiet refs/remotes/origin/"$DEFAULT_BRANCH" || { echo "❌ Branch origin/$DEFAULT_BRANCH not found."; exit 1; }
-          # Handle detached HEAD state
-          if [[ $(git rev-parse --abbrev-ref HEAD) == "HEAD" ]]; then
-            echo "ℹ️ Detached HEAD detected, checking out PR commit."
-            git checkout "${{ github.event.pull_request.head.sha }}" || { echo "❌ Failed to checkout PR commit."; exit 1; }
-          fi
-          # Generate diff
-          echo "ℹ️ Generating diff against origin/$DEFAULT_BRANCH"
-          if git merge-base origin/"$DEFAULT_BRANCH" HEAD >/dev/null; then
-            git diff origin/"$DEFAULT_BRANCH"...HEAD > pr_diff.txt || { echo "❌ Failed to generate diff."; exit 1; }
-          else
-            echo "⚠️ No merge base found. Generating full diff."
-            git diff > pr_diff.txt || { echo "❌ Failed to generate full diff."; exit 1; }
-          fi
-          # Debug: Check diff file
-          echo "ℹ️ pr_diff.txt contents:"
-          if [[ -f pr_diff.txt ]]; then
-            cat pr_diff.txt
-          else
-            echo "⚠️ pr_diff.txt is missing."
-          fi
-          # Handle empty diff
-          if [[ ! -s pr_diff.txt ]]; then
-            echo "No code changes detected in the pull request." > summary.txt
-            echo "✅ Summary generated (no changes)."
-            exit 0
-          fi
-          # Process diff (truncate to 500 lines to avoid API limits)
-          if [[ $(wc -l < pr_diff.txt) -gt 500 ]]; then
-            echo "⚠️ Diff exceeds 500 lines; truncating."
-            DIFF=$(head -n 500 pr_diff.txt | iconv -c -t utf-8)
-          else
-            DIFF=$(iconv -c -t utf-8 < pr_diff.txt)
-          fi
-          [[ -n "$DIFF" ]] || { echo "❌ iconv produced empty output."; exit 1; }
-          # Convert to JSON
-          DIFF_JSON=$(echo "$DIFF" | jq -Rs .) || { echo "❌ jq processing failed."; exit 1; }
-          # Prepare API payload
-          MODEL="llama3-70b-8192"
-          DATA=$(jq -n --arg model "$MODEL" --arg diff "$DIFF" \
-            '{ "model": $model, "messages": [ { "role": "system", "content": "You are an expert AI that summarizes GitHub pull request diffs into clean, concise summaries for reviewers. Focus on what changed, why, and any risks or special notes." }, { "role": "user", "content": $diff } ] }')
-          # Make API request with retries
-          for attempt in {1..3}; do
-            RESPONSE=$(curl -s -w "%{http_code}" https://api.groq.com/openai/v1/chat/completions \
-              -H "Authorization: Bearer $GROQ_API_KEY" \
-              -H "Content-Type: application/json" \
-              -d "$DATA" -o response_body.txt)
-            if [[ "$RESPONSE" == "429" ]]; then
-              echo "⚠️ Rate limit hit, retrying ($attempt/3)..."
-              sleep $((attempt * 5))
-              continue
-            fi
-            break
-          done
-          if [[ "$RESPONSE" != "200" ]]; then
-            echo "❌ API request failed (status $RESPONSE): $(cat response_body.txt)"
-            echo "⚠️ Generating fallback summary."
-            echo "Unable to generate AI summary due to API failure." > summary.txt
-            exit 0
-          fi
-          RESPONSE=$(cat response_body.txt)
-          # Save response for debugging
-          echo "$RESPONSE" > response_debug.txt
-          echo "ℹ️ API response saved to response_debug.txt"
-          # Extract summary
-          if ! echo "$RESPONSE" | jq -e '.choices[0].message.content' >/dev/null; then
-            echo "❌ Invalid API response: $RESPONSE"
-            echo "⚠️ Generating fallback summary."
-            echo "Unable to generate AI summary due to invalid API response." > summary.txt
-            exit 0
-          fi
-          SUMMARY=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
-          [[ -n "$SUMMARY" && "$SUMMARY" != "null" ]] || { echo "❌ Empty summary in API response."; echo "Unable to generate AI summary due to empty response." > summary.txt; exit 0; }
-          # Save summary
-          echo "$SUMMARY" > summary.txt
-          echo "✅ AI Summary generated."
-          echo "ℹ️ summary.txt contents:"
-          cat summary.txt
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-
-      - name: Debug: Verify summary.txt
-        run: |
-          if [[ -f summary.txt ]]; then
-            echo "ℹ️ summary.txt exists with contents:"
-            cat summary.txt
-          else
-            echo "❌ summary.txt does not exist."
-          fi
-
-      - name: Update PR description
-        run: |
-          if [[ ! -f summary.txt ]]; then
-            echo "❌ summary.txt not found. Check logs for Generate AI Summary step."
-            if [[ -f response_debug.txt ]]; then
-              echo "ℹ️ API response:"
-              cat response_debug.txt
-            fi
-            if [[ -f fetch_output.log ]]; then
-              echo "ℹ️ Fetch output:"
-              cat fetch_output.log
-            fi
-            exit 1
-          fi
-          BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
-          if [[ $? -ne 0 ]]; then
-            echo "❌ Failed to fetch PR body."
-            exit 1
-          fi
-          SUMMARY=$(cat summary.txt)
-          NEW_BODY="### 🧠 AI-Generated Summary\n\n${SUMMARY}\n\n---\n\n${BODY}"
-          echo -e "$NEW_BODY" | gh pr edit ${{ github.event.pull_request.number }} --body-file -
-          echo "✅ PR description updated."
+      - name: Generate AI PR Summary and update PR description
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-
-      - name: Clean up temporary files
-        if: always()
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          rm -f pr_diff.txt summary.txt response_body.txt response_debug.txt fetch_output.log
+          import os
+          import requests
+
+          GH_TOKEN = os.environ['GH_TOKEN']
+          GROQ_API_KEY = os.environ['GROQ_API_KEY']
+          REPO = os.environ['GITHUB_REPOSITORY']
+          PR_NUMBER = os.environ['PR_NUMBER']
+
+          # Get PR details
+          pr_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}"
+          headers = {
+              "Authorization": f"token {GH_TOKEN}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+          pr = requests.get(pr_url, headers=headers).json()
+
+          # Get list of changed files
+          files_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files"
+          files = requests.get(files_url, headers=headers).json()
+
+          summaries = []
+          for file in files:
+              filename = file['filename']
+              patch = file.get('patch', '')
+              if patch:
+                  prompt = (
+                      f"Summarize the following code changes in '{filename}' for a pull request description. "
+                      "Focus only on what has changed in the code, not on metadata, formatting or stylistic details:\n\n"
+                      f"{patch}"
+                  )
+                  groq_response = requests.post(
+                      "https://api.groq.com/openai/v1/chat/completions",
+                      headers={
+                          "Authorization": f"Bearer {GROQ_API_KEY}",
+                          "Content-Type": "application/json"
+                      },
+                      json={
+                          "model": "llama3-70b-8192",
+                          "messages": [
+                              {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
+                              {"role": "user", "content": prompt}
+                          ],
+                          "max_tokens": 256,
+                          "temperature": 0.4
+                      }
+                  )
+                  result = groq_response.json()
+                  ai_summary = result['choices'][0]['message']['content'].strip()
+                  summaries.append(f"**{filename}**\n{ai_summary}")
+
+          summary_text = "\n\n".join(summaries) if summaries else "No code changes detected for AI summary."
+
+          # Update PR description
+          patch = {
+              "body": f"### AI-generated Summary of Code Changes\n\n{summary_text}\n\n---\n*This summary was generated by Groq Llama3-70B.*"
+          }
+          requests.patch(pr_url, headers=headers, json=patch)
+
+        shell: python
