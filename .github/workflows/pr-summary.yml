@@ -1,4 +1,3 @@
-
 name: AI PR Summary
 
 on:
@@ -48,37 +47,34 @@ jobs:
           command -v gh >/dev/null || { echo "❌ gh not installed."; exit 2; }
           [[ -n "${GROQ_API_KEY:-}" && "${#GROQ_API_KEY}" -ge 10 ]] || { echo "❌ GROQ_API_KEY invalid or missing."; exit 3; }
 
+          # Debug: Log Git remote and branch info
+          echo "ℹ️ Git remote info:"
+          git remote -v
+          echo "ℹ️ Current branch:"
+          git rev-parse --abbrev-ref HEAD
+
           # Get default branch
           DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | awk '{print $NF}')
           [[ -n "$DEFAULT_BRANCH" ]] || { echo "❌ Could not determine default branch."; exit 1; }
+          echo "ℹ️ Default branch: $DEFAULT_BRANCH"
 
-          # Check shallow status
-          echo "ℹ️ Checking if repository is shallow."
-          if [[ -f .git/shallow ]]; then
-            echo "ℹ️ Shallow repository detected, attempting unshallow fetch."
-            if ! git fetch --unshallow origin "$DEFAULT_BRANCH" 2>&1 | tee fetch_output.log; then
-              if grep -q "does not make sense" fetch_output.log; then
-                echo "ℹ️ Repository is already complete, falling back to regular fetch."
-                git fetch origin "$DEFAULT_BRANCH" || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; exit 1; }
-              else
-                echo "❌ Failed to fetch origin/$DEFAULT_BRANCH (unshallow)."
-                cat fetch_output.log
-                exit 1
-              fi
-            fi
-          else
-            echo "ℹ️ Repository is not shallow, performing regular fetch."
-            git fetch origin "$DEFAULT_BRANCH" || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; exit 1; }
-          fi
+          # Fetch default branch
+          echo "ℹ️ Fetching origin/$DEFAULT_BRANCH"
+          git fetch origin "$DEFAULT_BRANCH" 2>&1 | tee fetch_output.log || { echo "❌ Failed to fetch origin/$DEFAULT_BRANCH."; cat fetch_output.log; exit 1; }
           git show-ref --verify --quiet refs/remotes/origin/"$DEFAULT_BRANCH" || { echo "❌ Branch origin/$DEFAULT_BRANCH not found."; exit 1; }
 
           # Generate diff
+          echo "ℹ️ Generating diff against origin/$DEFAULT_BRANCH"
           if git merge-base origin/"$DEFAULT_BRANCH" HEAD >/dev/null; then
             git diff origin/"$DEFAULT_BRANCH"...HEAD > pr_diff.txt || { echo "❌ Failed to generate diff."; exit 1; }
           else
             echo "⚠️ No merge base found. Generating full diff."
             git diff > pr_diff.txt || { echo "❌ Failed to generate full diff."; exit 1; }
           fi
+
+          # Debug: Check diff file
+          echo "ℹ️ pr_diff.txt contents:"
+          cat pr_diff.txt || echo "⚠️ pr_diff.txt is empty or missing."
 
           # Handle empty diff
           if [[ ! -s pr_diff.txt ]]; then
@@ -122,6 +118,7 @@ jobs:
 
           # Save response for debugging
           echo "$RESPONSE" > response_debug.txt
+          echo "ℹ️ API response saved to response_debug.txt"
 
           # Extract summary
           echo "$RESPONSE" | jq -e '.choices[0].message.content' >/dev/null || { echo "❌ Invalid API response: $RESPONSE"; exit 4; }
@@ -131,6 +128,8 @@ jobs:
           # Save summary
           echo "$SUMMARY" > summary.txt
           echo "✅ AI Summary generated."
+          echo "ℹ️ summary.txt contents:"
+          cat summary.txt
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
@@ -138,7 +137,15 @@ jobs:
       - name: Update PR description
         run: |
           if [[ ! -f summary.txt ]]; then
-            echo "❌ summary.txt not found."
+            echo "❌ summary.txt not found. Check logs for Generate AI Summary step."
+            if [[ -f response_debug.txt ]]; then
+              echo "ℹ️ API response:"
+              cat response_debug.txt
+            fi
+            if [[ -f fetch_output.log ]]; then
+              echo "ℹ️ Fetch output:"
+              cat fetch_output.log
+            fi
             exit 1
           fi
           BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body)
