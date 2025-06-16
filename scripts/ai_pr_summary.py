@@ -1,0 +1,193 @@
+import os
+import requests
+import time
+import re
+
+# --- Set these environment variables or rely on workflow to pass them ---
+GH_TOKEN = os.environ['GH_TOKEN']
+GROQ_API_KEY = os.environ['GROQ_API_KEY']
+REPO = os.environ['GITHUB_REPOSITORY']
+PR_NUMBER = os.environ['PR_NUMBER']
+# ------------------------------------------------------------------------
+
+pr_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}"
+headers = {
+    "Authorization": f"token {GH_TOKEN}",
+    "Accept": "application/vnd.github.v3+json"
+}
+files_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files"
+
+# Fetch all files with pagination
+files = []
+page = 1
+while True:
+    paged_files = requests.get(
+        f"{files_url}?page={page}&per_page=100",
+        headers=headers
+    ).json()
+    if not paged_files:
+        break
+    files.extend(paged_files)
+    if len(paged_files) < 100:
+        break
+    page += 1
+
+print(f"Fetched {len(files)} files for summary")
+BATCH_SIZE = 2
+MAX_PATCH_LEN = 12000
+MAX_RETRIES = 10
+
+def call_groq_api(prompt, filename):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "llama3-70b-8192",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.4
+    }
+    retries = 0
+    while retries < MAX_RETRIES:
+        response = requests.post(url, headers=headers, json=data)
+        try:
+            result = response.json()
+        except Exception:
+            result = {}
+        if response.status_code == 200 and 'choices' in result:
+            return result['choices'][0]['message']['content'].strip()
+        elif response.status_code == 429 or (isinstance(result, dict) and result.get('error', {}).get('code') == 'rate_limit_exceeded'):
+            wait_time = result.get('error', {}).get('retry_after')
+            if not wait_time:
+                msg = result.get('error', {}).get('message', '')
+                match = re.search(r'try again in ([\d\.]+)s', msg)
+                if match:
+                    wait_time = float(match.group(1))
+            if not wait_time:
+                wait_time = 2 ** retries
+            print(f"Groq API rate limit for {filename}: {result.get('error', {}).get('message', '')} -- retrying in {wait_time}s (attempt {retries+1}/{MAX_RETRIES})")
+            time.sleep(float(wait_time))
+            retries += 1
+        else:
+            print(f"Groq API error for {filename}: {result}")
+            break
+    return None
+
+def chunk_files(file_list, batch_size):
+    for i in range(0, len(file_list), batch_size):
+        yield file_list[i:i+batch_size]
+
+summaries = []
+batch_num = 1
+for file_batch in chunk_files(files, BATCH_SIZE):
+    print(f"Processing batch {batch_num} with {len(file_batch)} files")
+    for file in file_batch:
+        filename = file['filename']
+        patch = file.get('patch', '')
+        if patch:
+            if len(patch) > MAX_PATCH_LEN:
+                print(f"Patch for {filename} is too long ({len(patch)} chars), truncating to {MAX_PATCH_LEN} chars.")
+                patch = patch[:MAX_PATCH_LEN] + "\n[...diff truncated...]"
+            # --- BEGIN FULL PROMPT ---
+            prompt = (
+                f"You are an expert AI tasked with generating a highly detailed pull request description summarizing code changes in the provided git diff patch. "
+                "Analyze the patch and produce a professional, structured summary focusing exclusively on substantive code changes, ignoring metadata (e.g., timestamps, commit messages) "
+                "formatting, or stylistic changes (e.g., whitespace, comments, variable renaming unless functionally significant). If the patch includes multiple files, summarize each file "
+                "clearly indicating the filename in a header (e.g., 'File: filename'). For each file, structure the summary with bullet points under the following sections:\n\n"
+                "- **Changes**: Itemize every code change individually, including:\n"
+                "  - Added, removed, or modified functions, sub-functions, methods, classes, variables, or logic blocks.\n"
+                "  - For functions/methods: List the name, signature (parameters with types, return type), and describe the implementation (e.g., algorithm, key logic, sub-functions).\n"
+                "    - Include sub-bullets for nested changes (e.g., helper functions, modified conditions, or inner loops).\n"
+                "  - For variables: Specify type, scope, initialization, and purpose.\n"
+                "  - For logic changes: Detail altered conditions, loops, or algorithms, including any nested logic.\n"
+                "  - Use sub-bullets to describe sub-functions or nested changes within a single item.\n"
+                "- **Purpose**: For each change listed, explain its specific intent, including:\n"
+                "  - The problem solved, feature added, or improvement made (e.g., bug fix, new functionality).\n"
+                "  - Context or motivation (e.g., user requirement, performance bottleneck).\n"
+                "  - Use sub-bullets to align with each change in the 'Changes' section.\n"
+                "- **Impact**: For each change listed, describe its expected effects on the codebase, including:\n"
+                "  - New or altered functionality and its effect on user experience or system behavior.\n"
+                "  - Performance implications (e.g., time complexity, memory usage, scalability).\n"
+                "  - Affected modules, dependencies, APIs, or integration points.\n"
+                "  - Maintainability or code organization improvements.\n"
+                "  - Use sub-bullets to align with each change in the 'Changes' section.\n"
+                "- **Overall Summary**: Summarize the collective purpose and impact of all changes, including:\n"
+                "  - The overall goal of the changes (e.g., new feature, performance optimization).\n"
+                "  - The combined effect on the codebase (e.g., enhanced functionality, improved performance).\n"
+                "  - Differences between the previous code state (e.g., what was missing, limited, or problematic) and the current code state (e.g., what’s now enabled or improved).\n"
+                "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several', be precise—'three new functions'). "
+                "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code changes detected.'\n"
+                "Below are example summaries to guide the format and depth:\n\n"
+                "**Example 1: Python (utils.py)**\n"
+                "**File: utils.py**\n"
+                "- **Changes**:\n"
+                "  - Added function `process_text(s: str) -> tuple[str, int]`:\n"
+                "    - Takes a string `s` and returns a tuple of reversed string and vowel count.\n"
+                "    - Calls sub-functions `reverse_string` and `count_vowels`.\n"
+                "    - Sub-function `reverse_string(s: str) -> str`:\n"
+                "      - Uses slicing (`s[::-1]`) to reverse the string.\n"
+                "    - Sub-function `count_vowels(s: str) -> int`:\n"
+                "      - Uses regex (`re.compile(r'[aeiou]', re.IGNORECASE)`) to count vowels.\n"
+                "  - Added global variable `VOWEL_PATTERN: re.Pattern`:\n"
+                "    - Compiled regex pattern for vowels, initialized once for efficiency.\n"
+                "  - Added import: `re` for regex support.\n"
+                "- **Purpose**:\n"
+                "  - `process_text`: Combine string reversal and vowel counting for text analysis tasks.\n"
+                "    - Sub-function `reverse_string`: Enable string reversal for display purposes.\n"
+                "    - Sub-function `count_vowels`: Support text metrics for analytics.\n"
+                "  - `VOWEL_PATTERN`: Improve regex performance by compiling once.\n"
+                "  - `re` import: Enable regex functionality.\n"
+                "- **Impact**:\n"
+                "  - `process_text`: Adds integrated text processing, enhancing text module capabilities.\n"
+                "    - Sub-function `reverse_string`: O(n) time, minimal memory, supports UI text transformations.\n"
+                "    - Sub-function `count_vowels`: O(n) time, enables text analytics features.\n"
+                "  - `VOWEL_PATTERN`: Reduces regex compilation overhead, improving performance for repeated calls.\n"
+                "  - `re` import: No external dependency changes.\n"
+                "- **Overall Summary**:\n"
+                "  - The changes introduce text processing utilities to support analysis features.\n"
+                "  - Collectively, they enable string reversal and vowel counting, enhancing text module functionality with efficient regex usage.\n"
+                "  - Previously, the code lacked text processing capabilities; now, it supports integrated text transformations and metrics, improving modularity and reusability.\n"
+                "**Example 2: JavaScript (index.js)**\n"
+                "**File: index.js**\n"
+                "- **Changes**:\n"
+                "  - Modified function `fetchData(url: string): Promise`:\n"
+                "    - Added parameter `options: {{ timeout: number, cache: boolean }}` (defaults: `{{ timeout: 5000, cache: true }}`).\n"
+                "    - Added inner logic block:\n"
+                "      - Uses `AbortController` to cancel requests after `timeout` ms.\n"
+                "      - Implements local `Map` cache if `cache` is true.\n"
+                "  - Removed global variable `API_CACHE: Map`:\n"
+                "    - Replaced with local caching in `fetchData`.\n"
+                "- **Purpose**:\n"
+                "  - `fetchData` modification: Add timeout and configurable caching to improve API reliability.\n"
+                "    - Timeout logic: Prevent hanging requests for slow APIs.\n"
+                "    - Cache logic: Allow optional caching for performance.\n"
+                "  - `API_CACHE` removal: Eliminate global state to prevent memory leaks.\n"
+                "- **Impact**:\n"
+                "  - `fetchData` modification: Enhances user experience by avoiding stalled requests; caching reduces API calls (O(1) lookup).\n"
+                "    - Timeout logic: Adds minor overhead but improves reliability.\n"
+                "    - Cache logic: Saves bandwidth, configurable for flexibility.\n"
+                "  - `API_CACHE` removal: Improves maintainability, reduces memory usage in long-running apps.\n"
+                "- **Overall Summary**:\n"
+                "  - The changes enhance API request handling by adding timeout and caching options.\n"
+                "  - Collectively, they improve reliability and performance, reducing stalled requests and bandwidth usage.\n"
+                "  - Previously, the code risked hanging requests and memory leaks due to global state; now, it offers robust, configurable API calls with scoped caching.\n\n"
+                "Here is the git diff patch to analyze:\n\n"
+                f"{patch}"
+            )
+            # --- END FULL PROMPT ---
+            ai_summary = call_groq_api(prompt, filename)
+            if ai_summary:
+                summaries.append(f"**{filename}**\n{ai_summary}")
+    batch_num += 1
+
+print(f"Generated {len(summaries)} summaries")
+summary_text = "\n\n".join(summaries) if summaries else "No code changes detected for AI summary."
+patch = {
+    "body": f"### AI-generated Summary of Code Changes\n\n{summary_text}\n\n---\n*This summary was generated by Groq Llama3-70B.*"
+}
+requests.patch(pr_url, headers=headers, json=patch)
