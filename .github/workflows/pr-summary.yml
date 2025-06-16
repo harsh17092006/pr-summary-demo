@@ -53,10 +53,17 @@ jobs:
           files = requests.get(files_url, headers=headers).json()
 
           summaries = []
+          MAX_PATCH_LEN = 12000  # Avoid sending huge diffs that may break API
+
           for file in files:
               filename = file['filename']
               patch = file.get('patch', '')
               if patch:
+                  # Truncate large diffs to avoid context limit issues
+                  if len(patch) > MAX_PATCH_LEN:
+                      print(f"Patch for {filename} is too long ({len(patch)} chars), truncating to {MAX_PATCH_LEN} chars.")
+                      patch = patch[:MAX_PATCH_LEN] + "\n[...diff truncated...]"
+
                   prompt = (
                       f"You are an expert AI tasked with generating a highly detailed pull request description summarizing code changes in the provided git diff patch. "
                       "Analyze the patch and produce a professional, structured summary focusing exclusively on substantive code changes, ignoring metadata (e.g., timestamps, commit messages), "
@@ -83,8 +90,8 @@ jobs:
                       "  - The overall goal of the changes (e.g., new feature, performance optimization).\n"
                       "  - The combined effect on the codebase (e.g., enhanced functionality, improved performance).\n"
                       "  - Differences between the previous code state (e.g., what was missing, limited, or problematic) and the current code state (e.g., what’s now enabled or improved).\n\n"
-                      "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several new functions,' list each function explicitly with its details). "
-                      "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code changes detected.'\n\n"
+                      "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several new features,' specify what they are). "
+                      "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code changes found.'\n"
                       "Below are example summaries to guide the format and depth:\n\n"
                       "**Example 1: Python (utils.py)**\n"
                       "**File: utils.py**\n"
@@ -119,7 +126,7 @@ jobs:
                       "**File: index.js**\n"
                       "- **Changes**:\n"
                       "  - Modified function `fetchData(url: string): Promise`:\n"
-                      "    - Added parameter `options: { timeout: number, cache: boolean }` (defaults: `{ timeout: 5000, cache: true }`).\n"
+                      "    - Added parameter `options: {{ timeout: number, cache: boolean }}` (defaults: `{{ timeout: 5000, cache: true }}`).\n"
                       "    - Added inner logic block:\n"
                       "      - Uses `AbortController` to cancel requests after `timeout` ms.\n"
                       "      - Implements local `Map` cache if `cache` is true.\n"
@@ -142,25 +149,32 @@ jobs:
                       "Here is the git diff patch to analyze:\n\n"
                       f"{patch}"
                   )
-                  groq_response = requests.post(
-                      "https://api.groq.com/openai/v1/chat/completions",
-                      headers={
-                          "Authorization": f"Bearer {GROQ_API_KEY}",
-                          "Content-Type": "application/json"
-                      },
-                      json={
-                          "model": "llama3-70b-8192",
-                          "messages": [
-                              {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
-                              {"role": "user", "content": prompt}
-                          ],
-                          "max_tokens": 4096,
-                          "temperature": 0.4
-                      }
-                  )
-                  result = groq_response.json()
-                  ai_summary = result['choices'][0]['message']['content'].strip()
-                  summaries.append(f"**{filename}**\n{ai_summary}")
+                  try:
+                      groq_response = requests.post(
+                          "https://api.groq.com/openai/v1/chat/completions",
+                          headers={
+                              "Authorization": f"Bearer {GROQ_API_KEY}",
+                              "Content-Type": "application/json"
+                          },
+                          json={
+                              "model": "llama3-70b-8192",
+                              "messages": [
+                                  {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
+                                  {"role": "user", "content": prompt}
+                              ],
+                              "max_tokens": 4096,
+                              "temperature": 0.4
+                          }
+                      )
+                      result = groq_response.json()
+                      if 'choices' not in result:
+                          print(f"Groq API error for {filename}: {result}")
+                          continue
+                      ai_summary = result['choices'][0]['message']['content'].strip()
+                      summaries.append(f"**{filename}**\n{ai_summary}")
+                  except Exception as e:
+                      print(f"Error summarizing {filename}: {e}")
+                      continue
 
           summary_text = "\n\n".join(summaries) if summaries else "No code changes detected for AI summary."
 
