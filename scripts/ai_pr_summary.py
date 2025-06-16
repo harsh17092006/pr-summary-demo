@@ -10,6 +10,23 @@ REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
 # ------------------------------------------------------------------------
 
+CONTEXT_SUMMARY_FILE = "context_summary.txt"
+
+def read_context_summary():
+    if os.path.exists(CONTEXT_SUMMARY_FILE):
+        with open(CONTEXT_SUMMARY_FILE, "r") as f:
+            return f.read().strip()
+    return ""
+
+def update_context_summary(latest_summary):
+    previous = read_context_summary()
+    # You can truncate or further summarize here if the file gets too large
+    with open(CONTEXT_SUMMARY_FILE, "w") as f:
+        if previous:
+            f.write(previous + "\n" + latest_summary.strip())
+        else:
+            f.write(latest_summary.strip())
+
 pr_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}"
 headers = {
     "Authorization": f"token {GH_TOKEN}",
@@ -90,6 +107,11 @@ for file in files:
         combined_patch += f"\n\n---\nFile: {filename}\n{patch}"
 
 if combined_patch:
+    # Read and include the context summary before the patch
+    context_summary = read_context_summary()
+    if context_summary:
+        combined_patch = f"[Context summary of prior changes]:\n{context_summary}\n\n[Current batch changes]:\n{combined_patch}"
+
     # The prompt is kept exactly as in your original script
     prompt = (
         f"You are an expert AI tasked with generating a highly detailed pull request description summarizing code changes in the provided git diff patch. "
@@ -117,8 +139,8 @@ if combined_patch:
         "  - The overall goal of the changes (e.g., new feature, performance optimization).\n"
         "  - The combined effect on the codebase (e.g., enhanced functionality, improved performance).\n"
         "  - Differences between the previous code state (e.g., what was missing, limited, or problematic) and the current code state (e.g., what’s now enabled or improved).\n"
-        "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several', be precise—'three new functions'). "
-        "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code changes detected.'\n"
+        "Keep the summary concise, clear, and tailored for technical reviewers. Use a neutral, professional tone and avoid speculative or vague language (e.g., instead of 'several', be precise—[...]
+        "Use sub-bullets for clarity when describing nested changes or aligning purpose/impact with specific changes. If the patch is empty or lacks code changes, state 'No substantive code chang[...]
         "Below are example summaries to guide the format and depth:\n\n"
         "**Example 1: Python (utils.py)**\n"
         "**File: utils.py**\n"
@@ -178,6 +200,8 @@ if combined_patch:
     )
     ai_summary = call_groq_api(prompt, "all_files_combined")
     summary_text = ai_summary if ai_summary else "No code changes detected for AI summary."
+    if ai_summary:
+        update_context_summary(ai_summary)  # Update carry-forward summary after every batch
 else:
     summary_text = "No code changes detected for AI summary."
 
