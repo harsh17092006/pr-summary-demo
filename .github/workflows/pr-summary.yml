@@ -18,7 +18,12 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests PyGithub
+
+      - name: Fetch and batch all PRs
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: python scripts/fetch_and_batch_prs.py
 
       - name: Generate AI PR Summary and update PR description
         env:
