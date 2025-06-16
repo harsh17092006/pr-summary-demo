@@ -34,32 +34,64 @@ jobs:
         run: |
           import os
           import requests
+          import time
 
           GH_TOKEN = os.environ['GH_TOKEN']
           GROQ_API_KEY = os.environ['GROQ_API_KEY']
           REPO = os.environ['GITHUB_REPOSITORY']
           PR_NUMBER = os.environ['PR_NUMBER']
 
-          # Get PR details
           pr_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}"
           headers = {
               "Authorization": f"token {GH_TOKEN}",
               "Accept": "application/vnd.github.v3+json"
           }
           pr = requests.get(pr_url, headers=headers).json()
-
-          # Get list of changed files
           files_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files"
           files = requests.get(files_url, headers=headers).json()
 
           summaries = []
-          MAX_PATCH_LEN = 12000  # Avoid sending huge diffs that may break API
+          MAX_PATCH_LEN = 12000
+          MAX_RETRIES = 5
+
+          def call_groq_api(prompt, filename):
+              url = "https://api.groq.com/openai/v1/chat/completions"
+              headers = {
+                  "Authorization": f"Bearer {GROQ_API_KEY}",
+                  "Content-Type": "application/json"
+              }
+              data = {
+                  "model": "llama3-70b-8192",
+                  "messages": [
+                      {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
+                      {"role": "user", "content": prompt}
+                  ],
+                  "max_tokens": 4096,
+                  "temperature": 0.4
+              }
+              retries = 0
+              while retries < MAX_RETRIES:
+                  response = requests.post(url, headers=headers, json=data)
+                  result = response.json()
+                  # Check for success
+                  if response.status_code == 200 and 'choices' in result:
+                      return result['choices'][0]['message']['content'].strip()
+                  # Handle rate limit
+                  elif response.status_code == 429 or (isinstance(result, dict) and result.get('error', {}).get('code') == 'rate_limit_exceeded'):
+                      wait_time = 2 ** retries
+                      msg = result.get('error', {}).get('message', '')
+                      print(f"Groq API rate limit for {filename}: {msg} -- retrying in {wait_time}s (attempt {retries+1}/{MAX_RETRIES})")
+                      time.sleep(wait_time)
+                      retries += 1
+                  else:
+                      print(f"Groq API error for {filename}: {result}")
+                      break
+              return None
 
           for file in files:
               filename = file['filename']
               patch = file.get('patch', '')
               if patch:
-                  # Truncate large diffs to avoid context limit issues
                   if len(patch) > MAX_PATCH_LEN:
                       print(f"Patch for {filename} is too long ({len(patch)} chars), truncating to {MAX_PATCH_LEN} chars.")
                       patch = patch[:MAX_PATCH_LEN] + "\n[...diff truncated...]"
@@ -149,39 +181,15 @@ jobs:
                       "Here is the git diff patch to analyze:\n\n"
                       f"{patch}"
                   )
-                  try:
-                      groq_response = requests.post(
-                          "https://api.groq.com/openai/v1/chat/completions",
-                          headers={
-                              "Authorization": f"Bearer {GROQ_API_KEY}",
-                              "Content-Type": "application/json"
-                          },
-                          json={
-                              "model": "llama3-70b-8192",
-                              "messages": [
-                                  {"role": "system", "content": "You are a helpful assistant that summarizes code changes in pull requests."},
-                                  {"role": "user", "content": prompt}
-                              ],
-                              "max_tokens": 4096,
-                              "temperature": 0.4
-                          }
-                      )
-                      result = groq_response.json()
-                      if 'choices' not in result:
-                          print(f"Groq API error for {filename}: {result}")
-                          continue
-                      ai_summary = result['choices'][0]['message']['content'].strip()
+
+                  ai_summary = call_groq_api(prompt, filename)
+                  if ai_summary:
                       summaries.append(f"**{filename}**\n{ai_summary}")
-                  except Exception as e:
-                      print(f"Error summarizing {filename}: {e}")
-                      continue
 
           summary_text = "\n\n".join(summaries) if summaries else "No code changes detected for AI summary."
 
-          # Update PR description
           patch = {
               "body": f"### AI-generated Summary of Code Changes\n\n{summary_text}\n\n---\n*This summary was generated by Groq Llama3-70B.*"
           }
           requests.patch(pr_url, headers=headers, json=patch)
-
         shell: python
