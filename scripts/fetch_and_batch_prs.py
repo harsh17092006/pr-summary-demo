@@ -1,15 +1,33 @@
 import os
-from github import Github
+import time
+from github import Github, GithubException, RateLimitExceededException
 
-def fetch_all_prs(repo_name, token, batch_size=20):
-    # Authenticate using the provided GitHub token
+def fetch_all_prs(repo_name, token, batch_size=20, max_retries=5):
     g = Github(token)
     repo = g.get_repo(repo_name)
     all_prs = []
-    page = 0
+    per_page = 100  # Maximum allowed by GitHub API
 
+    page = 0
     while True:
-        prs_batch = repo.get_pulls(state="open", sort="created", direction="desc").get_page(page)
+        retries = 0
+        while retries < max_retries:
+            try:
+                prs_batch = repo.get_pulls(state="open", sort="created", direction="desc").get_page(page)
+                break  # Success, exit retry loop
+            except RateLimitExceededException as e:
+                reset_time = g.get_rate_limit().core.reset.timestamp()
+                wait_time = max(reset_time - time.time(), 1)
+                print(f"GitHub API rate limit exceeded. Waiting for {int(wait_time)} seconds before retrying...")
+                time.sleep(wait_time)
+                retries += 1
+            except GithubException as e:
+                print(f"GitHub API error: {e}. Retrying in {2 ** retries} seconds...")
+                time.sleep(2 ** retries)
+                retries += 1
+        else:
+            raise Exception("Max retries exceeded while fetching PRs.")
+
         if not prs_batch:
             break
         all_prs.extend(prs_batch)
