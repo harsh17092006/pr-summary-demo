@@ -48,7 +48,21 @@ jobs:
           }
           pr = requests.get(pr_url, headers=headers).json()
           files_url = f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files"
-          files = requests.get(files_url, headers=headers).json()
+
+          # PAGINATION FIX: fetch all files, not just the first 30
+          files = []
+          page = 1
+          while True:
+              paged_files = requests.get(
+                  f"{files_url}?page={page}&per_page=100",
+                  headers=headers
+              ).json()
+              if not paged_files:
+                  break
+              files.extend(paged_files)
+              if len(paged_files) < 100:
+                  break
+              page += 1
 
           summaries = []
           MAX_PATCH_LEN = 12000
